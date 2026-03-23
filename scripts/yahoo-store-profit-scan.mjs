@@ -441,6 +441,8 @@ let mobileIchibanPrice = null;
 if (mobileIchiban && mobileIchiban.price) {
   mobileIchibanPrice = mobileIchiban.price;
 }
+      const mobileProfit =
+  mobileIchibanPrice != null ? mobileIchibanPrice - selectedEffectivePrice : null;
       return {
         storeId: args.store,
         itemUrl,
