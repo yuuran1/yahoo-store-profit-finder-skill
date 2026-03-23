@@ -502,3 +502,4 @@ main().catch((err) => {
   console.error(`Error: ${err.message || err}`);
   process.exit(1);
 });
+import { searchMobileIchibanByJan } from "./mobile-ichiban.mjs";
