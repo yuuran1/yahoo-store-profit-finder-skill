@@ -3,9 +3,11 @@
 /**
  * Yahoo Shopping store scraper (HTML only, no Yahoo API)
  * -> extracts price/point/effective price/JAN
- * -> searches morimori-kaitori and computes profit candidates
+ * -> searches morimori-kaitori and mobile-ichiban and computes profit candidates
  */
+
 import { searchMobileIchibanByJan } from "./mobile-ichiban.mjs";
+
 const DEFAULTS = {
   pages: 1,
   maxItems: 30,
@@ -259,7 +261,7 @@ function parseMorimoriProducts(html) {
   for (const block of blocks) {
     const nameRaw = block.match(/<h4 class="search-product-details-name">([\s\S]*?)<\/h4>/i)?.[1] || "";
     const name = stripHtml(nameRaw);
-    const jan = (block.match(/JAN\s*[:：]\s*(\d{8,14})/i)?.[1] || null);
+    const jan = block.match(/JAN\s*[:：]\s*(\d{8,14})/i)?.[1] || null;
     const normal = normalizeYen(
       block.match(/<div class="price-normal-number">([\s\S]*?)<\/div>/i)?.[1] || "",
     );
@@ -350,7 +352,37 @@ function formatYen(n) {
   return `${Math.round(n).toLocaleString("ja-JP")}円`;
 }
 
-function printResultTable(results, mode) {
+function chooseBestBuyer(row) {
+  const candidates = [];
+
+  if (Number.isFinite(row.morimoriPrice)) {
+    candidates.push({
+      buyerName: `森森(${row.morimoriMode})`,
+      buyerPrice: row.morimoriPrice,
+      buyerProfit: row.morimoriSelectedProfit,
+    });
+  }
+
+  if (Number.isFinite(row.mobileIchibanPrice)) {
+    candidates.push({
+      buyerName: "モバイル一番",
+      buyerPrice: row.mobileIchibanPrice,
+      buyerProfit: row.mobileIchibanProfit,
+    });
+  }
+
+  if (!candidates.length) {
+    return {
+      buyerName: "-",
+      buyerPrice: null,
+      buyerProfit: null,
+    };
+  }
+
+  return candidates.sort((a, b) => (b.buyerProfit ?? -Infinity) - (a.buyerProfit ?? -Infinity))[0];
+}
+
+function printResultTable(results) {
   if (!results.length) {
     console.log("\n利益が出る候補は見つかりませんでした。");
     return;
@@ -358,9 +390,10 @@ function printResultTable(results, mode) {
 
   const header = [
     "No",
+    "買取先",
     "利益",
     "Yahoo実質",
-    `森森(${mode})`,
+    "買取価格",
     "JAN",
     "商品名",
   ];
@@ -370,9 +403,10 @@ function printResultTable(results, mode) {
   results.forEach((r, i) => {
     const line = [
       String(i + 1),
-      formatYen(r.selectedProfit),
+      r.bestBuyerName || "-",
+      formatYen(r.bestProfit),
       formatYen(r.selectedEffectivePrice),
-      formatYen(r.morimoriPrice),
+      formatYen(r.bestBuyerPrice),
       r.jan || "-",
       (r.title || "").slice(0, 60),
     ];
@@ -398,8 +432,10 @@ async function main() {
       buildStoreSearchUrl(args.store, args.keyword || "", i + 1),
     );
 
-    const searchHtmlList = await runPool(pageUrls, Math.min(args.concurrency, pageUrls.length), (u) =>
-      client.fetchText(u, args.timeoutMs),
+    const searchHtmlList = await runPool(
+      pageUrls,
+      Math.min(args.concurrency, pageUrls.length),
+      (u) => client.fetchText(u, args.timeoutMs),
     );
 
     const urlSet = new Set();
@@ -430,19 +466,30 @@ async function main() {
       const best = pickMorimoriBest(mmProducts, parsed, args.mode);
 
       const morimoriPrice = best ? normalizeYen(best[args.mode]) : null;
-      const profit = morimoriPrice != null ? morimoriPrice - effectivePrice : null;
-      const profitWithEntry =
+      const morimoriProfit = morimoriPrice != null ? morimoriPrice - effectivePrice : null;
+      const morimoriProfitWithEntry =
         morimoriPrice != null ? morimoriPrice - effectivePriceWithEntry : null;
-      const selectedProfit = morimoriPrice != null ? morimoriPrice - selectedEffectivePrice : null;
-const mobileIchiban = await searchMobileIchibanByJan(client, parsed.jan, args.timeoutMs);
+      const morimoriSelectedProfit =
+        morimoriPrice != null ? morimoriPrice - selectedEffectivePrice : null;
 
-let mobileIchibanPrice = null;
-
-if (mobileIchiban && mobileIchiban.price) {
-  mobileIchibanPrice = mobileIchiban.price;
-}
+      const mobileIchiban = await searchMobileIchibanByJan(client, parsed.jan, args.timeoutMs);
+      const mobileIchibanPrice =
+        mobileIchiban && mobileIchiban.price ? normalizeYen(mobileIchiban.price) : null;
       const mobileProfit =
-  mobileIchibanPrice != null ? mobileIchibanPrice - selectedEffectivePrice : null;
+        mobileIchibanPrice != null ? mobileIchibanPrice - effectivePrice : null;
+      const mobileProfitWithEntry =
+        mobileIchibanPrice != null ? mobileIchibanPrice - effectivePriceWithEntry : null;
+      const mobileIchibanProfit =
+        mobileIchibanPrice != null ? mobileIchibanPrice - selectedEffectivePrice : null;
+
+      const bestBuyer = chooseBestBuyer({
+        morimoriPrice,
+        morimoriMode: args.mode,
+        morimoriSelectedProfit,
+        mobileIchibanPrice,
+        mobileIchibanProfit,
+      });
+
       return {
         storeId: args.store,
         itemUrl,
@@ -456,26 +503,37 @@ if (mobileIchiban && mobileIchiban.price) {
         pointSource: args.pointSource,
         effectivePrice,
         effectivePriceWithEntry,
+
         morimoriQuery: query,
         morimoriSearchUrl: mmUrl,
         morimoriMatchCount: mmProducts.length,
         morimoriMatched: best,
         morimoriPrice,
-        profit,
-        profitWithEntry,
-        selectedProfit,
+        morimoriProfit,
+        morimoriProfitWithEntry,
+        morimoriSelectedProfit,
+
+        mobileIchibanMatched: mobileIchiban || null,
+        mobileIchibanPrice,
+        mobileProfit,
+        mobileProfitWithEntry,
+        mobileIchibanProfit,
+
+        bestBuyerName: bestBuyer.buyerName,
+        bestBuyerPrice: bestBuyer.buyerPrice,
+        bestProfit: bestBuyer.buyerProfit,
       };
     });
 
     const completed = detailRows.filter((r) => r && !r.error && !r.skipped);
     const profitable = completed
-      .filter((r) => Number.isFinite(r.selectedProfit) && r.selectedProfit >= args.minProfit)
-      .sort((a, b) => b.selectedProfit - a.selectedProfit);
+      .filter((r) => Number.isFinite(r.bestProfit) && r.bestProfit >= args.minProfit)
+      .sort((a, b) => b.bestProfit - a.bestProfit);
 
     console.log(`Parsed items: ${completed.length}`);
     console.log(`Profitable candidates (>= ${args.minProfit}円): ${profitable.length}`);
 
-    printResultTable(profitable, args.mode);
+    printResultTable(profitable);
 
     if (args.jsonPath) {
       const fs = await import("node:fs/promises");
@@ -510,4 +568,3 @@ main().catch((err) => {
   console.error(`Error: ${err.message || err}`);
   process.exit(1);
 });
-import { searchMobileIchibanByJan } from "./mobile-ichiban.mjs";
