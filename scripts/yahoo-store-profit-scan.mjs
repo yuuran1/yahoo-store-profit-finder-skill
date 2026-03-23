@@ -434,7 +434,13 @@ async function main() {
       const profitWithEntry =
         morimoriPrice != null ? morimoriPrice - effectivePriceWithEntry : null;
       const selectedProfit = morimoriPrice != null ? morimoriPrice - selectedEffectivePrice : null;
+const mobileIchiban = await searchMobileIchibanByJan(client, parsed.jan, args.timeoutMs);
 
+let mobileIchibanPrice = null;
+
+if (mobileIchiban && mobileIchiban.price) {
+  mobileIchibanPrice = mobileIchiban.price;
+}
       return {
         storeId: args.store,
         itemUrl,
