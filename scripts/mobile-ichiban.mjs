@@ -1,3 +1,6 @@
+// scripts/mobile-ichiban.mjs
+// モバイル一番のトップページから JAN と買取価格を抽出する簡易スクレイパー
+
 const MOBILE_ICHIBAN_URL = "https://www.mobile-ichiban.com/";
 
 function normalizeText(value) {
