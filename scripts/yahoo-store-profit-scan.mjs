@@ -5,7 +5,7 @@
  * -> extracts price/point/effective price/JAN
  * -> searches morimori-kaitori and computes profit candidates
  */
-
+import { searchMobileIchibanByJan } from "./mobile-ichiban.mjs";
 const DEFAULTS = {
   pages: 1,
   maxItems: 30,
